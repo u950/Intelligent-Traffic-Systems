@@ -1,8 +1,8 @@
 
 ## Installing OpenCV.
-Your Nano's default memory (4 GB RAM + 2 GB swap) is not enough for a quick build.<br/>
+Jetson Nano's default memory (4 GB RAM + 2 GB swap) is insufficient for a quick build.<br/>
 In this case, the compilation will be done by 1 core, which will take a long time.<br/>
-It would be best if you had more memory allocated to your Nano for the fast 4-core build.<br/>
+It would be best to allocate more memory to your Nano for the fast 4-core build.<br/>
 ```
 
 # OpenCV 4.9.0 -> 8.5 GB!
@@ -17,7 +17,7 @@ $ wget https://github.com/Qengineering/Install-OpenCV-Jetson-Nano/raw/main/OpenC
 $ sudo chmod 755 ./OpenCV-4-10-0.sh
 $ ./OpenCV-4-10-0.sh
 ```
-:point_right: Don't forget to reset your swap memory afterwards.
+:point_right: Don't forget to reset your swap memory afterward.
 
 ------------
 
