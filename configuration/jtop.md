@@ -1,22 +1,6 @@
-Here's a **README.md** file for installing **Jtop** on the Jetson Nano, which is a monitoring tool specifically for Jetson devices to view system usage, temperatures, CPU/GPU performance, memory, and more.
+A monitoring tool specifically for Jetson devices to view system usage, temperatures, CPU/GPU performance, memory, and more.
 
-```markdown
-# Jtop Installation Guide for Jetson Nano
 
-**Jtop** is a system monitoring tool for NVIDIA Jetson devices, which provides real-time information about CPU/GPU usage, RAM, swap memory, and other statistics. This guide will show you how to install **Jtop** on a Jetson Nano.
-
-## Prerequisites
-
-Ensure your Jetson Nano has the following before proceeding:
-- Installed JetPack SDK (minimum version: JetPack 4.4)
-- Python 3.x installed (by default on Jetson Nano)
-- Sufficient internet connectivity
-
-## Step 1: Update the System
-
-Before installing **Jtop**, update your system packages to ensure you have the latest repositories and security updates.
-
-```bash
 sudo apt-get update
 sudo apt-get upgrade
 ```
