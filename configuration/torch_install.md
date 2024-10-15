@@ -2,6 +2,7 @@
 Below are example commands for installing these PyTorch wheels on Jetson. Substitute the URL and filenames from the desired PyTorch download from above.
 
 > Python 3
+> torch
 ```
 # substitute the link URL and wheel filename from the desired torch version above
 wget https://nvidia.box.com/shared/static/p57jwntv436lfrd78inwl7iml6p13fzh.whl -O torch-1.8.0-cp36-cp36m-linux_aarch64.whl
