@@ -75,7 +75,3 @@ sudo -H pip3 uninstall jetson-stats
 
 ---
 
-By following this guide, you can easily install and start using **Jtop** on your Jetson Nano to monitor the system's performance in real-time.
-```
-
-This **README.md** file provides a step-by-step guide to install and use **Jtop** on Jetson Nano. It also includes commands for updating, running, and uninstalling the package.
