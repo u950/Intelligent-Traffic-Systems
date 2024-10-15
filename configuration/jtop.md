@@ -5,11 +5,6 @@ sudo apt-get update
 sudo apt-get upgrade
 ```
 
-## Step 2: Install Python Pip
-
-Jtop is installed via **pip3**, so make sure you have Python's package manager installed.
-
-```bash
 sudo apt-get install python3-pip
 ```
 
