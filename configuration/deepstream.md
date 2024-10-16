@@ -86,3 +86,4 @@ Once DeepStream is installed, you can run the sample application to verify that 
 
     ```bash
     cd /opt/nvidia/deepstream/deepstream-6.0/sources/apps/sample
+    sudo GST_DEBUG=3 ./deepstream-app /opt/nvidia/deepstream/deepstream-6.0/samples/streams/sample_720p.h264
