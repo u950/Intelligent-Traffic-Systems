@@ -14,9 +14,20 @@ $ sudo bash -c 'echo "/var/swapfile swap swap defaults 0 0" >> /etc/fstab'
 ```
 $ sudo reboot
 ```
-
-> CUDA path variable ->
-> edit in /.bashrc file
+### Remove Swapfile
+```
+sudo swapoff /var/swapfile
+sudo nano /etc/fstab
+# comment out /var/swapfile swap swap defaults 0 0
+sudo rm -rf /var/swapfile
+```
+# verify swap removal
+```
+free -h
+sudo reboot
+```
+#set CUDA variable
+### CUDA path variable -> edit in /.bashrc file
 
 ```
 $ export PATH=${PATH}:/usr/local/cuda/bin
