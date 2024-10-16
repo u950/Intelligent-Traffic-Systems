@@ -21,7 +21,7 @@ sudo nano /etc/fstab
 # comment out /var/swapfile swap swap defaults 0 0
 sudo rm -rf /var/swapfile
 ```
-# verify swap removal
+### verify swap removal
 ```
 free -h
 sudo reboot
