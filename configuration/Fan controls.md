@@ -1,3 +1,5 @@
+### enter in terminal for quick fan operations
+        sudo sh -c ec
 # jetson-fan-ctl
 Automagic fan control for the Nvidia Jetson Nano
 
@@ -7,12 +9,12 @@ Automagic fan control for the Nvidia Jetson Nano
 You will need a 5V PWM fan for this to make any sense.  
 I used the **Noctua nf-a4x20 5V PWM** fan.
 
-Additionally, I recommend you use the barrel jack with a 4A power supply.  
+Also, I think you should use the barrel jack with a 4A power supply.  
 
 ### Software
-I will assume you use the standard image on your jetson nano.
+I will assume you use the standard image on your Jetson Nano.
 
-Python 3 should be pre-installed on the jetson nano.  
+Python 3 should be pre-installed on the Jetson Nano.  
 You can check this using <code>python3 --version</code>  
 (3.5 or higher should be fine.)  
 otherwise, you can install it with  
