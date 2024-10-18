@@ -13,19 +13,14 @@ It would be best to allocate more memory to your Nano for the fast 4-core build.
 # or only 1 core is used for the compilation.
 $ free -m
 
-$ wget https://github.com/Qengineering/Install-OpenCV-Jetson-Nano/raw/main/OpenCV-4-8-0.sh
-$ sudo chmod 755 ./OpenCV-4-8-0.sh
-$ ./OpenCV-4-8-0.sh
+wget https://github.com/Qengineering/Install-OpenCV-Jetson-Nano/raw/main/OpenCV-4-5-0.sh
+sudo chmod 755 ./OpenCV-4-5-0.sh
+./OpenCV-4-5-0.sh
 ```
 :point_right: Don't forget to reset your swap memory afterward.
 
 ------------
 
-If you want to beautify OpenCV with the Qt5 GUI, you need to
-- $ sudo apt-get install qt5-default
-- Set the -D WITH_QT=**ON** \ (± line 62) in the script<br/>
- 
-before running the script on your Nano
 
 ------------
 
