@@ -1,5 +1,8 @@
 ### enter in terminal for quick fan operations
-        sudo sh -c ec
+```
+sudo sh -c 'echo 255 > /sys/devices/pwm-fan/target_pwm'
+```
+
 # jetson-fan-ctl
 Automagic fan control for the Nvidia Jetson Nano
 
