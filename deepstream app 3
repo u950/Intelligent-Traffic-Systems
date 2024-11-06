@@ -344,4 +344,5 @@ def main(args):
 if __name__ == '__main__':
     sys.exit(main(sys.argv))
 
-
+0:01:36.547499745 14100   0x7f38002350 INFO                 nvinfer gstnvinfer_impl.cpp:313:notifyLoadModelStatus:<primary-inference> [UID 1]: Load new model:dstest3_pgie_config.txt sucessfully
+Error: gst-stream-error-quark: Internal data stream error. (1): gstbasesrc.c(3055): gst_base_sr
