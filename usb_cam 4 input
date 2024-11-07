@@ -3,15 +3,18 @@
 import sys
 import gi
 import configparser
-import math
 import time
-from gi.repository import GObject, Gst
-from common.is_aarch_64 import is_aarch64
+import math
+from ctypes import *
 from common.FPS import GETFPS
+gi.require_version('Gst', '1.0')
+from gi.repository import GObject, Gst
+from gi.repository import GLib
+
 import pyds
 
-# Initialize FPS dictionary
 fps_streams = {}
+
 MAX_DISPLAY_LEN = 64
 PGIE_CLASS_ID_VEHICLE = 0
 PGIE_CLASS_ID_BICYCLE = 1
@@ -22,8 +25,46 @@ MUXER_OUTPUT_HEIGHT = 1080
 MUXER_BATCH_TIMEOUT_USEC = 4000000
 TILED_OUTPUT_WIDTH = 1280
 TILED_OUTPUT_HEIGHT = 720
-
+OSD_PROCESS_MODE = 0
+OSD_DISPLAY_TEXT = 1
 pgie_classes_str = ["Vehicle", "TwoWheeler", "Person", "RoadSign"]
+
+# Update with the number of USB cameras
+num_sources = 2
+usb_device_paths = ["/dev/video0", "/dev/video1"]  # Update paths for each USB camera
+
+# Helper function to create source bin for each USB camera
+def create_source_bin(index, device_path):
+    print(f"Creating source bin for USB camera {index} at {device_path}")
+    bin_name = f"source-bin-{index}"
+    nbin = Gst.Bin.new(bin_name)
+
+    source = Gst.ElementFactory.make("v4l2src", f"usb-camera-source-{index}")
+    source.set_property("device", device_path)
+
+    caps_filter = Gst.ElementFactory.make("capsfilter", f"filter-{index}")
+    caps_filter.set_property("caps", Gst.Caps.from_string("video/x-raw,format=YUY2,width=640,height=480,framerate=30/1"))
+
+    nvvidconv_src = Gst.ElementFactory.make("nvvideoconvert", f"convertor-src-{index}")
+    caps_filter_nvmm = Gst.ElementFactory.make("capsfilter", f"capsfilter-nvmm-{index}")
+    caps_filter_nvmm.set_property("caps", Gst.Caps.from_string("video/x-raw(memory:NVMM), format=I420"))
+
+    # Add elements to the source bin
+    nbin.add(source)
+    nbin.add(caps_filter)
+    nbin.add(nvvidconv_src)
+    nbin.add(caps_filter_nvmm)
+
+    source.link(caps_filter)
+    caps_filter.link(nvvidconv_src)
+    nvvidconv_src.link(caps_filter_nvmm)
+
+    # Adding ghost pad to the bin
+    bin_ghost_pad = caps_filter_nvmm.get_static_pad("src")
+    bin_pad = Gst.GhostPad.new("src", bin_ghost_pad)
+    nbin.add_pad(bin_pad)
+
+    return nbin
 
 def tiler_src_pad_buffer_probe(pad, info, u_data):
     frame_number = 0
@@ -40,6 +81,7 @@ def tiler_src_pad_buffer_probe(pad, info, u_data):
             frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
         except StopIteration:
             break
+
         frame_number = frame_meta.frame_num
         l_obj = frame_meta.obj_meta_list
         num_rects = frame_meta.num_obj_meta
@@ -49,6 +91,7 @@ def tiler_src_pad_buffer_probe(pad, info, u_data):
             PGIE_CLASS_ID_BICYCLE: 0,
             PGIE_CLASS_ID_ROADSIGN: 0
         }
+
         while l_obj is not None:
             try:
                 obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
@@ -59,121 +102,126 @@ def tiler_src_pad_buffer_probe(pad, info, u_data):
                 l_obj = l_obj.next
             except StopIteration:
                 break
-        print(f"Frame Number={frame_number} Number of Objects={num_rects} Vehicle_count={obj_counter[PGIE_CLASS_ID_VEHICLE]} Person_count={obj_counter[PGIE_CLASS_ID_PERSON]}")
-        fps_streams["stream{0}".format(frame_meta.pad_index)].get_fps()
+
+        print("Frame Number=", frame_number, "Number of Objects=", num_rects, 
+              "Vehicle_count=", obj_counter[PGIE_CLASS_ID_VEHICLE], 
+              "Person_count=", obj_counter[PGIE_CLASS_ID_PERSON])
+
+        fps_streams["stream0"].get_fps()
         try:
             l_frame = l_frame.next
         except StopIteration:
             break
+
     return Gst.PadProbeReturn.OK
 
-def create_source_bin(index, device):
-    print("Creating source bin for device:", device)
-    bin_name = f"source-bin-{index:02d}"
-    nbin = Gst.Bin.new(bin_name)
-    if not nbin:
-        sys.stderr.write(" Unable to create source bin \n")
 
-    # Create a v4l2src element for USB camera
-    source = Gst.ElementFactory.make("v4l2src", "usb-source")
-    if not source:
-        sys.stderr.write(" Unable to create source for USB camera \n")
-    source.set_property("device", device)
+def main():
+    for i in range(num_sources):
+        fps_streams[f"stream{i}"] = GETFPS(i)
 
-    # Set up caps for the USB camera
-    caps = Gst.ElementFactory.make("capsfilter", "source-caps")
-    caps.set_property("caps", Gst.Caps.from_string("video/x-raw, width=640, height=480, framerate=30/1"))
-
-    # Use nvvideoconvert for memory management
-    nvvidconv = Gst.ElementFactory.make("nvvideoconvert", "nvvideo-converter")
-    if not nvvidconv:
-        sys.stderr.write(" Unable to create nvvideoconvert \n")
-
-    # Create the nvv4l2h264enc encoder
-    encoder = Gst.ElementFactory.make("nvv4l2h264enc", "h264-encoder")
-    encoder.set_property("bitrate", 4000000)
-
-    # Use rtph264pay for packetizing
-    h264parser = Gst.ElementFactory.make("h264parse", "h264-parser")
-
-    queue = Gst.ElementFactory.make("queue", "queue")
-
-    nbin.add(source)
-    nbin.add(caps)
-    nbin.add(nvvidconv)
-    nbin.add(encoder)
-    nbin.add(h264parser)
-    nbin.add(queue)
-
-    source.link(caps)
-    caps.link(nvvidconv)
-    nvvidconv.link(encoder)
-    encoder.link(h264parser)
-    h264parser.link(queue)
-
-    # Create ghost pad
-    bin_pad = nbin.add_pad(Gst.GhostPad.new_no_target("src", Gst.PadDirection.SRC))
-    if not bin_pad:
-        sys.stderr.write(" Failed to add ghost pad in source bin \n")
-        return None
-    return nbin
-
-def main(args):
-    if len(args) < 2:
-        sys.stderr.write("usage: %s <device1> [device2] ... [deviceN]\n" % args[0])
-        sys.exit(1)
-
-    for i in range(0, len(args) - 1):
-        fps_streams["stream{0}".format(i)] = GETFPS(i)
-
-    number_sources = len(args) - 1
-
+    # Standard GStreamer initialization
     GObject.threads_init()
     Gst.init(None)
+
+    print("Creating Pipeline \n")
     pipeline = Gst.Pipeline()
-    is_live = False
 
     if not pipeline:
-        sys.stderr.write(" Unable to create Pipeline \n")
+        sys.stderr.write("Unable to create Pipeline \n")
 
-    print("Creating streammux \n ")
+    print("Creating streammux \n")
     streammux = Gst.ElementFactory.make("nvstreammux", "Stream-muxer")
     if not streammux:
-        sys.stderr.write(" Unable to create NvStreamMux \n")
+        sys.stderr.write("Unable to create NvStreamMux \n")
 
     pipeline.add(streammux)
-    for i in range(number_sources):
-        device = args[i + 1]
-        source_bin = create_source_bin(i, device)
-        if not source_bin:
-            sys.stderr.write("Unable to create source bin \n")
+
+    for i, device_path in enumerate(usb_device_paths):
+        source_bin = create_source_bin(i, device_path)
         pipeline.add(source_bin)
-        sinkpad = streammux.get_request_pad(f"sink_{i}")
+        padname = f"sink_{i}"
+        sinkpad = streammux.get_request_pad(padname)
         if not sinkpad:
-            sys.stderr.write("Unable to create sink pad bin \n")
+            sys.stderr.write("Unable to get the sink pad of streammux \n")
         srcpad = source_bin.get_static_pad("src")
         if not srcpad:
-            sys.stderr.write("Unable to create src pad bin \n")
+            sys.stderr.write("Unable to get src pad of source bin \n")
         srcpad.link(sinkpad)
 
-    # Rest of the pipeline elements (pgie, tiler, etc.) similar to original code
-    # Add pgie, tiler, nvvidconv, nvosd, sink, and link them here
+    queue1 = Gst.ElementFactory.make("queue", "queue1")
+    queue2 = Gst.ElementFactory.make("queue", "queue2")
+    queue3 = Gst.ElementFactory.make("queue", "queue3")
+    queue4 = Gst.ElementFactory.make("queue", "queue4")
+    queue5 = Gst.ElementFactory.make("queue5")
 
-    # Probe to extract metadata and handle buffer
-    tiler_src_pad = tiler.get_static_pad("sink")
-    if not tiler_src_pad:
-        sys.stderr.write(" Unable to get src pad \n")
-    else:
-        tiler_src_pad.add_probe(Gst.PadProbeType.BUFFER, tiler_src_pad_buffer_probe, 0)
+    pipeline.add(queue1)
+    pipeline.add(queue2)
+    pipeline.add(queue3)
+    pipeline.add(queue4)
+    pipeline.add(queue5)
+
+    print("Creating Pgie \n")
+    pgie = Gst.ElementFactory.make("nvinfer", "primary-inference")
+    pgie.set_property('config-file-path', "dstest3_pgie_config.txt")
+
+    print("Creating tiler \n")
+    tiler = Gst.ElementFactory.make("nvmultistreamtiler", "nvtiler")
+    tiler.set_property("rows", int(math.sqrt(num_sources)))
+    tiler.set_property("columns", int(math.ceil(num_sources / math.sqrt(num_sources))))
+    tiler.set_property("width", TILED_OUTPUT_WIDTH)
+    tiler.set_property("height", TILED_OUTPUT_HEIGHT)
+
+    nvvidconv = Gst.ElementFactory.make("nvvideoconvert", "convertor")
+    nvosd = Gst.ElementFactory.make("nvdsosd", "onscreendisplay")
+    nvosd.set_property('process-mode', OSD_PROCESS_MODE)
+    nvosd.set_property('display-text', OSD_DISPLAY_TEXT)
+
+    sink = Gst.ElementFactory.make("nveglglessink", "nvvideo-renderer")
+    sink.set_property("qos", 0)
+
+    # Adding and linking all elements to the pipeline
+    pipeline.add(pgie)
+    pipeline.add(tiler)
+    pipeline.add(nvvidconv)
+    pipeline.add(nvosd)
+    pipeline.add(sink)
+
+    streammux.link(queue1)
+    queue1.link(pgie)
+    pgie.link(queue2)
+    queue2.link(tiler)
+    tiler.link(queue3)
+    queue3.link(nvvidconv)
+    nvvidconv.link(queue4)
+    queue4.link(nvosd)
+    nvosd.link(queue5)
+    queue5.link(sink)
+
+    streammux.set_property('width', 1920)
+    streammux.set_property('height', 1080)
+    streammux.set_property('batch-size', num_sources)
+    streammux.set_property('batched-push-timeout', 4000000)
+
+    # Event loop and message bus
+    loop = GObject.MainLoop()
+    bus = pipeline.get_bus()
+    bus.add_signal_watch()
+    bus.connect("message", bus_call, loop)
+
+    tiler_sink_pad = nvosd.get_static_pad("sink")
+    tiler_sink_pad.add_probe(Gst.PadProbeType.BUFFER, tiler_src_pad_buffer_probe, 0)
 
     print("Starting pipeline \n")
     pipeline.set_state(Gst.State.PLAYING)
     try:
-        loop = GObject.MainLoop()
         loop.run()
     except:
         pass
+
+    print("Exiting app\n")
     pipeline.set_state(Gst.State.NULL)
 
+
 if __name__ == '__main__':
-    sys.exit(main(sys.argv))
+    sys.exit(main())
