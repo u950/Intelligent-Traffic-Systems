@@ -225,3 +225,7 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
+
+
+Error: gst-resource-error-quark: Invalid URI "/dev/video0". (3): gsturidecodebin.c(1384): gen_source_element (): /GstPipeline:pipeline0/GstBin:source-bin-00/GstURIDecodeBin:uri-decode-bin
+Exiting app
