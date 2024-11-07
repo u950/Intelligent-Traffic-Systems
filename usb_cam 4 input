@@ -1,240 +1,79 @@
-#!/usr/bin/env python3
-
-################################################################################
-# SPDX-FileCopyrightText: Copyright (c) 2020-2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-################################################################################
-
 import sys
-sys.path.append('../')
 import gi
-gi.require_version('Gst', '1.0')
-from gi.repository import GObject, Gst
-from common.is_aarch_64 import is_aarch64
-from common.bus_call import bus_call
-
+import time
 import pyds
+from collections import deque
 
-PGIE_CLASS_ID_VEHICLE = 0
-PGIE_CLASS_ID_BICYCLE = 1
-PGIE_CLASS_ID_PERSON = 2
-PGIE_CLASS_ID_ROADSIGN = 3
+gi.require_version("Gst", "1.0")
+from gi.repository import Gst, GLib
 
+# Initialize GStreamer
+Gst.init(None)
 
-def osd_sink_pad_buffer_probe(pad, info, u_data):
-    frame_number = 0
-    # Initializing object counter with 0 for each camera stream
-    obj_counter = {
-        PGIE_CLASS_ID_VEHICLE: 0,
-        PGIE_CLASS_ID_PERSON: 0,
-        PGIE_CLASS_ID_BICYCLE: 0,
-        PGIE_CLASS_ID_ROADSIGN: 0
-    }
-    num_rects = 0
+# Define paths for the DeepStream configuration files and model
+config_file = "/path/to/deepstream/config_file.txt"
+model_path = "/path/to/yolov8/model"
 
-    gst_buffer = info.get_buffer()
-    if not gst_buffer:
-        print("Unable to get GstBuffer ")
-        return
+# Create a deque to store streams
+streams = deque()
 
-    # Retrieve batch metadata from the gst_buffer
-    batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
-    l_frame = batch_meta.frame_meta_list
-    while l_frame is not None:
-        try:
-            # Note that l_frame.data needs a cast to pyds.NvDsFrameMeta
-            frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
-        except StopIteration:
-            break
-
-        frame_number = frame_meta.frame_num
-        num_rects = frame_meta.num_obj_meta
-        l_obj = frame_meta.obj_meta_list
-        while l_obj is not None:
-            try:
-                # Casting l_obj.data to pyds.NvDsObjectMeta
-                obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
-            except StopIteration:
-                break
-            obj_counter[obj_meta.class_id] += 1
-            try:
-                l_obj = l_obj.next
-            except StopIteration:
-                break
-
-        # Acquiring a display meta object
-        display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
-        display_meta.num_labels = 1
-        py_nvosd_text_params = display_meta.text_params[0]
-        # Setting display text to be shown on screen
-        py_nvosd_text_params.display_text = "Frame Number={} Vehicle_count={} Person_count={}".format(
-            frame_number, obj_counter[PGIE_CLASS_ID_VEHICLE], obj_counter[PGIE_CLASS_ID_PERSON])
-
-        # Now set the offsets where the string should appear
-        py_nvosd_text_params.x_offset = 10
-        py_nvosd_text_params.y_offset = 12
-
-        # Font, font-color, and font-size
-        py_nvosd_text_params.font_params.font_name = "Serif"
-        py_nvosd_text_params.font_params.font_size = 10
-        py_nvosd_text_params.font_params.font_color.set(1.0, 1.0, 1.0, 1.0)
-
-        # Text background color
-        py_nvosd_text_params.set_bg_clr = 1
-        py_nvosd_text_params.text_bg_clr.set(0.0, 0.0, 0.0, 1.0)
-
-        # Using pyds.get_string() to get display_text as string
-        print(pyds.get_string(py_nvosd_text_params.display_text))
-        pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)
-
-        try:
-            l_frame = l_frame.next
-        except StopIteration:
-            break
-
-    return Gst.PadProbeReturn.OK
-
-
-def main(args):
-    # Check input arguments (allowing up to 4 cameras)
-    if len(args) < 2 or len(args) > 5:
-        sys.stderr.write("usage: %s <v4l2-device-path1> [<v4l2-device-path2> ... <v4l2-device-path4>]\n" % args[0])
-        sys.exit(1)
-
-    # Standard GStreamer initialization
-    GObject.threads_init()
-    Gst.init(None)
-
-    # Create gstreamer elements
-    print("Creating Pipeline \n")
+# Initialize the DeepStream pipeline
+def create_pipeline(num_sources):
+    # Create an empty pipeline
     pipeline = Gst.Pipeline()
 
-    if not pipeline:
-        sys.stderr.write(" Unable to create Pipeline \n")
+    # For each camera source, create the necessary elements
+    for i in range(num_sources):
+        source = Gst.ElementFactory.make("v4l2src", f"source_{i}")
+        source.set_property("device", f"/dev/video{i}")
+        cap_filter = Gst.ElementFactory.make("capsfilter", f"filter_{i}")
+        caps = Gst.Caps.from_string("video/x-raw, format=BGRx")
+        cap_filter.set_property("caps", caps)
 
-    # Source elements for multiple USB cameras (up to 4)
-    sources = []
-    caps_v4l2srcs = []
-    for i in range(len(args) - 1):
-        source = Gst.ElementFactory.make("v4l2src", f"usb-cam-source-{i}")
-        if not source:
-            sys.stderr.write(f" Unable to create Source for camera {i}\n")
-        sources.append(source)
+        # Convert frames from video stream to DeepStream compatible format
+        nvvidconv = Gst.ElementFactory.make("nvvideoconvert", f"nvconv_{i}")
+        nvvideoconvert = Gst.ElementFactory.make("nvvidconv", f"nvvconv_{i}")
+        # Set the model for inference (YOLOv8 or any other pre-trained model)
+        pgie = Gst.ElementFactory.make("nvinfer", f"pgie_{i}")
+        pgie.set_property("config-file-path", config_file)
+        pgie.set_property("model-engine-file", model_path)
 
-        caps_v4l2src = Gst.ElementFactory.make("capsfilter", f"v4l2src_caps-{i}")
-        if not caps_v4l2src:
-            sys.stderr.write(f" Unable to create v4l2src capsfilter for camera {i}\n")
-        caps_v4l2srcs.append(caps_v4l2src)
+        # Output sink for showing the inference result
+        nvdsosd = Gst.ElementFactory.make("nvdsosd", f"osd_{i}")
+        sink = Gst.ElementFactory.make("nveglglessink", f"sink_{i}")
 
-    print("Creating Video Converter \n")
-    vidconvsrc = Gst.ElementFactory.make("videoconvert", "convertor_src1")
-    if not vidconvsrc:
-        sys.stderr.write(" Unable to create videoconvert \n")
+        # Add the elements to the pipeline
+        pipeline.add(source, cap_filter, nvvidconv, pgie, nvdsosd, sink)
+        source.link(cap_filter)
+        cap_filter.link(nvvidconv)
+        nvvidconv.link(pgie)
+        pgie.link(nvdsosd)
+        nvdsosd.link(sink)
 
-    nvvidconvsrc = Gst.ElementFactory.make("nvvideoconvert", "convertor_src2")
-    if not nvvidconvsrc:
-        sys.stderr.write(" Unable to create Nvvideoconvert \n")
+        streams.append(pipeline)
 
-    caps_vidconvsrc = Gst.ElementFactory.make("capsfilter", "nvmm_caps")
-    if not caps_vidconvsrc:
-        sys.stderr.write(" Unable to create capsfilter \n")
+    return pipeline
 
-    # Create nvstreammux instance to form batches from multiple sources.
-    streammux = Gst.ElementFactory.make("nvstreammux", "Stream-muxer")
-    if not streammux:
-        sys.stderr.write(" Unable to create NvStreamMux \n")
 
-    pgie = Gst.ElementFactory.make("nvinfer", "primary-inference")
-    if not pgie:
-        sys.stderr.write(" Unable to create pgie \n")
+# Process inference for each camera input
+def run_inference():
+    # Create the pipeline with 2 camera streams for demonstration
+    pipeline = create_pipeline(2)
 
-    nvvidconv = Gst.ElementFactory.make("nvvideoconvert", "convertor")
-    if not nvvidconv:
-        sys.stderr.write(" Unable to create nvvidconv \n")
-
-    nvosd = Gst.ElementFactory.make("nvdsosd", "onscreendisplay")
-    if not nvosd:
-        sys.stderr.write(" Unable to create nvosd \n")
-
-    if is_aarch64():
-        transform = Gst.ElementFactory.make("nvegltransform", "nvegl-transform")
-
-    print("Creating EGLSink \n")
-    sink = Gst.ElementFactory.make("nveglglessink", "nvvideo-renderer")
-    if not sink:
-        sys.stderr.write(" Unable to create egl sink \n")
-
-    # Set properties for each camera source and configure the pipeline
-    for i in range(len(args) - 1):
-        caps_v4l2srcs[i].set_property('caps', Gst.Caps.from_string("video/x-raw, framerate=30/1"))
-        sources[i].set_property('device', args[i + 1])
-        pipeline.add(sources[i])
-        pipeline.add(caps_v4l2srcs[i])
-
-    streammux.set_property('width', 1920)
-    streammux.set_property('height', 1080)
-    streammux.set_property('batch-size', len(args) - 1)  # Adjust batch size for multiple cameras
-    streammux.set_property('batched-push-timeout', 4000000)
-    pgie.set_property('config-file-path', "dstest1_pgie_config.txt")
-    sink.set_property('sync', False)
-
-    # Adding elements to Pipeline
-    pipeline.add(vidconvsrc)
-    pipeline.add(nvvidconvsrc)
-    pipeline.add(caps_vidconvsrc)
-    pipeline.add(streammux)
-    pipeline.add(pgie)
-    pipeline.add(nvvidconv)
-    pipeline.add(nvosd)
-    pipeline.add(sink)
-    if is_aarch64():
-        pipeline.add(transform)
-
-    # Link the elements together
-    for i in range(len(args) - 1):
-        sources[i].link(caps_v4l2srcs[i])
-        caps_v4l2srcs[i].link(vidconvsrc)
-
-    vidconvsrc.link(nvvidconvsrc)
-    nvvidconvsrc.link(caps_vidconvsrc)
-    caps_vidconvsrc.link(streammux)
-    streammux.link(pgie)
-    pgie.link(nvvidconv)
-    nvvidconv.link(nvosd)
-    nvosd.link(sink)
-
-    if is_aarch64():
-        nvosd.link(transform)
-        transform.link(sink)
-
-    # Add callback for OSD probe
-    sink.get_static_pad("sink").add_probe(Gst.PadProbeType.BUFFER, osd_sink_pad_buffer_probe, None)
-
-    # Start the pipeline
+    # Start playing the pipeline
     pipeline.set_state(Gst.State.PLAYING)
 
-    # Wait until error or EOS
-    loop = GObject.MainLoop()
-    bus = pipeline.get_bus()
-    bus.add_signal_watch()
-    bus.connect("message", bus_call, loop)
-    loop.run()
+    try:
+        # Start the GLib main loop for continuous processing
+        loop = GLib.MainLoop()
+        loop.run()
 
-    # Free pipeline resources
-    pipeline.set_state(Gst.State.NULL)
+    except KeyboardInterrupt:
+        # Handle user interruption
+        print("Shutting down the pipeline...")
+        pipeline.set_state(Gst.State.NULL)
+        loop.quit()
 
 
-if __name__ == '__main__':
-    sys.exit(main(sys.argv))
+if __name__ == "__main__":
+    run_inference()
