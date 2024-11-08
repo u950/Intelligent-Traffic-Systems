@@ -1,38 +1,76 @@
 import Jetson.GPIO as GPIO
+import time
 
-# print(GPIO.JETSON_INFO)
-# print(GPIO.VERSION)
+# Define GPIO pins for each LED
+LED_PINS = {
+    'side1': {'red': 11, 'yellow': 13, 'green': 15},
+    'side2': {'red': 19, 'yellow': 21, 'green': 23},
+    'side3': {'red': 29, 'yellow': 31, 'green': 33},
+    'side4': {'red': 35, 'yellow': 37, 'green': 38}
+}
 
-import time 
+# Initial vehicle counts for each lane
+vehicle_counts = [55, 24, 30, 63]  # Example initial values
 
-# pin definition
-led_pin_red =7
-led_green = 11
-led_blue = 19
-
-l1 = 38
-
+# Setup GPIO
 GPIO.setmode(GPIO.BOARD)
-GPIO.setup(l1, GPIO.OUT, initial=GPIO.HIGH)
-GPIO.setup(led_pin_red, GPIO.OUT, initial=GPIO.LOW)
-GPIO.setup(led_green, GPIO.OUT, initial=GPIO.HIGH)
-GPIO.setup(led_blue, GPIO.OUT, initial=GPIO.LOW)
+for side in LED_PINS.values():
+    for color in side.values():
+        GPIO.setup(color, GPIO.OUT)
 
-print("press ctrl + c to stop blinking")
+def select_action(vehicle_counts):
+    """Select the lane with the highest vehicle count to prioritize green light."""
+    return vehicle_counts.index(max(vehicle_counts))
 
+def update_vehicle_counts(vehicle_counts, action, time_allocated):
+    """Update vehicle counts after green light duration on selected lane."""
+    updated_counts = vehicle_counts[:]
+    updated_counts[action] -= int(time_allocated * 5)  # Assume 5 cars pass per second
+    for i in range(len(updated_counts)):
+        if i != action:
+            updated_counts[i] += 6  # Assume 6 cars arrive per interval
+    updated_counts = [max(0, count) for count in updated_counts]  # Prevent negative counts
+    return updated_counts
 
-while True:
-    # time.sleep(2)
-    GPIO.output(led_green, GPIO.HIGH)
-    print("Green Go")
-    time.sleep(7)
-    GPIO.output(led_green, GPIO.LOW)
-    GPIO.output(led_blue, GPIO.HIGH)
-    print('wait ...')
-    time.sleep(2)
-    GPIO.output(led_blue, GPIO.LOW)
-    # time.sleep(1)
-    GPIO.output(led_pin_red, GPIO.HIGH)
-    print("Halt Red")
-    time.sleep(5)
-    GPIO.output(led_pin_red, GPIO.LOW)
+def set_traffic_lights(active_side):
+    """Turn on green LED for active side, red for others."""
+    for side, pins in LED_PINS.items():
+        if side == active_side:
+            GPIO.output(pins['green'], GPIO.HIGH)
+            GPIO.output(pins['red'], GPIO.LOW)
+        else:
+            GPIO.output(pins['green'], GPIO.LOW)
+            GPIO.output(pins['red'], GPIO.HIGH)
+        GPIO.output(pins['yellow'], GPIO.LOW)
+
+try:
+    for step in range(10):  # Run simulation for 10 steps
+        print(f"\nStep {step + 1}:")
+        
+        # Select the lane with the most congestion
+        action = select_action(vehicle_counts)
+        print("Selected Lane for Green Light:", action + 1)
+
+        # Calculate green light duration based on vehicle count
+        time_allocated = vehicle_counts[action] / 3  # Duration in seconds
+        print(f"Time Allocated for Green Light in Lane {action + 1}: {time_allocated:.2f} seconds")
+
+        # Activate green light on the selected lane, red on others
+        active_side = f'side{action + 1}'
+        set_traffic_lights(active_side)
+        time.sleep(time_allocated)  # Keep the green light on for the allocated time
+
+        # Turn off yellow light briefly before the next cycle
+        GPIO.output(LED_PINS[active_side]['green'], GPIO.LOW)
+        GPIO.output(LED_PINS[active_side]['yellow'], GPIO.HIGH)
+        time.sleep(2)  # Yellow light duration
+        GPIO.output(LED_PINS[active_side]['yellow'], GPIO.LOW)
+
+        # Update vehicle counts
+        vehicle_counts = update_vehicle_counts(vehicle_counts, action, time_allocated)
+        print("Updated Vehicle Counts:", vehicle_counts)
+
+except KeyboardInterrupt:
+    pass
+finally:
+    GPIO.cleanup()
