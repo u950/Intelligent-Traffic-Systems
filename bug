@@ -1,0 +1,11 @@
+0:01:22.206892853 13475   0x7f68002350 INFO                 nvinfer gstnvinfer.cpp:638:gst_nvinfer_logger:<p376rimary-inference> NvDsInferContext[UID 1]: Info from NvDsInferContextImpl::buildModel() <nvdsinfer_context_impl.cpp:1947> [UID = 1]: serialize cuda engine to file: /opt/nvidia/deepstream/deepstream-6.0/samples/models/Primary_Detector/resnet10.caffemodel_b1_gpu0_fp16.engine successfully
+INFO: [Implicit Engine Info]: layers num: 3
+0   INPUT  kFLOAT input_1         3x368x640       
+1   OUTPUT kFLOAT conv2d_bbox     16x23x40        
+2   OUTPUT kFLOAT conv2d_cov/Sigmoid 4x23x40         
+
+0:01:23.058585702 13475   0x7f68002350 INFO                 nvinfer gstnvinfer_impl.cpp:313:notifyLoadModelStatus:<p376rimary-inference> [UID 1]: Load new model:dstest1_pgie_config.txt sucessfully
+Error: gst-stream-error-quark: Internal data stream error. (1): gstbasesrc.c(3055): gst_base_src_loop (): /GstPipeline:pipeline0/GstBin:source-bin-00/GstV4l2Src:usb-cam-source:
+streaming stopped, reason not-negotiated (-4)
+Exiting app
+
