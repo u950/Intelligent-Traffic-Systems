@@ -185,17 +185,21 @@ def create_source_bin(index,uri):
     if not source:
         sys.stderr.write(" Unable to create source \n")
         
-    # Add these properties to manage memory better
+    # Optimize v4l2src properties for lower memory usage
     source.set_property('device', uri)
-    source.set_property('io-mode', 2) # Memory mapping
-    source.set_property('num-buffers', 4) # Reduce number of buffers
-    source.set_property('always-copy', False) # Avoid unnecessary copying
-
+    source.set_property('io-mode', 1)  # Changed to memory mapping mode
+    source.set_property('do-timestamp', True)
+    source.set_property('queue-size', 2)  # Reduce queue size
+    
     caps_v4l2src = Gst.ElementFactory.make("capsfilter", "v4l2src_caps")
     if not caps_v4l2src:
         sys.stderr.write("Could not create caps_v4l2src")
     
-        # videoconvert to make sure a superset of raw formats are supported
+    # Reduce resolution and framerate in source caps
+    caps_v4l2src.set_property('caps', 
+        Gst.Caps.from_string("video/x-raw, width=640, height=480, framerate=15/1"))
+
+    # videoconvert to make sure a superset of raw formats are supported
     vidconvsrc = Gst.ElementFactory.make("videoconvert", "convertor_src1")
     if not vidconvsrc:
         sys.stderr.write(" Unable to create videoconvert \n")
@@ -367,8 +371,9 @@ def main(args):
     streammux.set_property('width', 640) # Reduce from 1280
     streammux.set_property('height', 480) # Reduce from 720
     streammux.set_property('batch-size', number_sources)
-    streammux.set_property('batched-push-timeout', 4000000)
-    streammux.set_property('buffer-pool-size', 4) # Limit buffer pool size
+    streammux.set_property('batched-push-timeout', 40000)  # Reduced timeout
+    streammux.set_property('buffer-pool-size', 3)  # Reduced pool size
+    streammux.set_property('nvbuf-memory-type', 3)  # Use surface memory
     pgie.set_property('config-file-path', "dstest1_pgie_config.txt")
     pgie_batch_size=pgie.get_property("batch-size")
     if(pgie_batch_size != number_sources):
@@ -380,9 +385,29 @@ def main(args):
     tiler_columns=2
     tiler.set_property("rows",tiler_rows)
     tiler.set_property("columns",tiler_columns)
-    tiler.set_property("width", TILED_OUTPUT_WIDTH)
-    tiler.set_property("height", TILED_OUTPUT_HEIGHT)
+    tiler.set_property("width", 1280)  # Reduced from 1920
+    tiler.set_property("height", 720)  # Reduced from 1080
     sink.set_property("qos",0)
+
+    # Add queue properties to manage memory
+    for queue in [queue1, queue2, queue3, queue4, queue5]:
+        queue.set_property('max-size-buffers', 2)
+        queue.set_property('max-size-bytes', 0)
+        queue.set_property('max-size-time', 0)
+        queue.set_property('leaky', 2)  # Leak downstream (newer frames)
+    
+    # Modify pgie properties
+    pgie.set_property('batch-size', number_sources)
+    pgie.set_property('interval', 2)  # Process every 2nd frame
+    
+    # Add nvvidconv properties
+    nvvidconv.set_property('nvbuf-memory-type', 3)  # Use surface memory
+    
+    # Modify sink properties
+    sink.set_property('sync', False)
+    sink.set_property('async', False)
+    sink.set_property('max-lateness', -1)
+    sink.set_property('qos', True)
 
     print("Adding elements to Pipeline \n")
     pipeline.add(pgie)
@@ -436,6 +461,14 @@ def main(args):
     # cleanup
     print("Exiting app\n")
     pipeline.set_state(Gst.State.NULL)
+
+    # Add error handler to pipeline bus
+    def on_error(bus, msg):
+        err, debug = msg.parse_error()
+        print(f"Error: {err}, Debug: {debug}")
+        loop.quit()
+        
+    bus.connect('message::error', on_error)
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv))
