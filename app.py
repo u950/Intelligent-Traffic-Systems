@@ -1,25 +1,4 @@
 #!/usr/bin/env python3
-################################################################################
-# Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
-#
-# Permission is hereby granted, free of charge, to any person obtaining a
-# copy of this software and associated documentation files (the "Software"),
-# to deal in the Software without restriction, including without limitation
-# the rights to use, copy, modify, merge, publish, distribute, sublicense,
-# and/or sell copies of the Software, and to permit persons to whom the
-# Software is furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
-# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-# DEALINGS IN THE SOFTWARE.
-################################################################################
 
 import sys
 sys.path.append('../')
@@ -38,29 +17,19 @@ from common.bus_call import bus_call
 from common.FPS import GETFPS
 
 import pyds
-import threading
 
 fps_streams={}
-
-# Add mutex for thread-safe access to vehicle counts
-vehicle_count_lock = threading.Lock()
-Vehicle_count = {0:0, 1:0, 2:0, 3:0}
-
-def get_vehicle_counts():
-    """Thread-safe method to get current vehicle counts"""
-    with vehicle_count_lock:
-        return Vehicle_count.copy()
 
 MAX_DISPLAY_LEN=64
 PGIE_CLASS_ID_VEHICLE = 0
 PGIE_CLASS_ID_BICYCLE = 1
 PGIE_CLASS_ID_PERSON = 2
 PGIE_CLASS_ID_ROADSIGN = 3
-MUXER_OUTPUT_WIDTH=1344
-MUXER_OUTPUT_HEIGHT=376
+MUXER_OUTPUT_WIDTH=1280
+MUXER_OUTPUT_HEIGHT=720
 MUXER_BATCH_TIMEOUT_USEC=4000000
-TILED_OUTPUT_WIDTH=1344
-TILED_OUTPUT_HEIGHT=376 * 2
+TILED_OUTPUT_WIDTH=640 * 2
+TILED_OUTPUT_HEIGHT=480 * 2
 GST_CAPS_FEATURES_NVMM="memory:NVMM"
 OSD_PROCESS_MODE= 0
 OSD_DISPLAY_TEXT= 0
@@ -140,9 +109,7 @@ def tiler_src_pad_buffer_probe(pad,info,u_data):
         #print("Frame Number=", frame_number, "Number of Objects=",num_rects,"Vehicle_count=",vehicle_count,"Person_count=",person)
         pyds.nvds_add_display_meta_to_frame(frame_meta, display_meta)"""
         print("Frame Number=", frame_number, "Number of Objects=",num_rects,"Vehicle_count=",obj_counter[PGIE_CLASS_ID_VEHICLE],"Person_count=",obj_counter[PGIE_CLASS_ID_PERSON])
-        # Update vehicle count with thread safety
-        with vehicle_count_lock:
-            Vehicle_count[frame_meta.source_id] = obj_counter[PGIE_CLASS_ID_VEHICLE]
+
         # Get frame rate through this probe
         fps_streams["stream{0}".format(frame_meta.pad_index)].get_fps()
         try:
@@ -189,6 +156,8 @@ def decodebin_child_added(child_proxy,Object,name,user_data):
 def create_source_bin(index,uri):
     print("Creating source bin")
 
+    # is_mjpg = format == "MJPEG"
+    
     # Create a source GstBin to abstract this bin's content from the rest of the
     # pipeline
     bin_name="source-bin-%02d" %index
@@ -229,8 +198,12 @@ def create_source_bin(index,uri):
     if not caps_vidconvsrc:
         sys.stderr.write(" Unable to create capsfilter \n")
 
-    caps_v4l2src.set_property('caps', Gst.Caps.from_string("video/x-raw, framerate=15/1"))
-    caps_vidconvsrc.set_property('caps', Gst.Caps.from_string("video/x-raw(memory:NVMM)"))
+    # if is_mjpg:
+    #     caps_v4l2src.set_property('caps', Gst.Caps.from_string("video/x-raw, framerate=15/1"))
+    
+    caps_v4l2src.set_property('caps', Gst.Caps.from_string("video/x-raw,framerate=15/1"))
+    
+    caps_vidconvsrc.set_property('caps', Gst.Caps.from_string("video/x-raw(memory:NVMM) "))
 
     source.set_property('device', uri)
 
@@ -270,12 +243,31 @@ def create_source_bin(index,uri):
 
 #For reference here is the code for setting up the pipelines and the linking for the app:
 
-def main(args):
+def main(args): 
     # Check input arguments
     if len(args) < 2:
         sys.stderr.write("usage: %s <uri1> [uri2] ... [uriN]\n" % args[0])
         sys.exit(1)
 
+    #  for mjpg
+    # fps_streams["stream{0}"]=GETFPS(0)
+    # source_bin = create_source_bin(0,args[1], is_mjpg=False)
+    # pipeline.add(source_bin)
+    # srcpad = source_bin.get_static_pad("src")
+    # sinkpad = streammux.get_request_pad("sink_0")
+    # srcpad.link(sinkpad)
+    
+    # for YUYV
+    
+    # for i in range(1,len(args)-1):
+    #     fps_streams["stream{i}"]=GETFPS(i)
+    #     source_bin = create_source_bin(i,args[i+1], is_mjpg=False)
+    #     pipeline.add(source_bin)
+    #     srcpad = source_bin.get_static_pad("src")
+    #     sinkpad = streammux.get_request_pad("sink_{i}")
+    #     srcpad.link(sinkpad)
+        
+    
     for i in range(0,len(args)-1):
         fps_streams["stream{0}".format(i)]=GETFPS(i)
         print(GETFPS(i))
@@ -363,11 +355,11 @@ def main(args):
         print("Atleast one of the sources is live")
         streammux.set_property('live-source', 1)
 
-    streammux.set_property('width', 1344)
-    streammux.set_property('height', 376)
+    streammux.set_property('width', 1280)
+    streammux.set_property('height', 720)
     streammux.set_property('batch-size', number_sources)
     streammux.set_property('batched-push-timeout', 4000000)
-    pgie.set_property('config-file-path', "config_infer_primary_yoloV3.txt")
+    pgie.set_property('config-file-path', "dstest1_pgie_config.txt")
     pgie_batch_size=pgie.get_property("batch-size")
     if(pgie_batch_size != number_sources):
         print("WARNING: Overriding infer-config batch-size",pgie_batch_size," with number of sources ", number_sources," \n")
@@ -375,7 +367,7 @@ def main(args):
     #tiler_rows=int(math.sqrt(number_sources))
     tiler_rows=2
     #tiler_columns=int(math.ceil((1.0*number_sources)/tiler_rows))
-    tiler_columns=1
+    tiler_columns=2
     tiler.set_property("rows",tiler_rows)
     tiler.set_property("columns",tiler_columns)
     tiler.set_property("width", TILED_OUTPUT_WIDTH)
@@ -424,24 +416,16 @@ def main(args):
         if (i != 0):
             print(i, ": ", source)
 
-    # Start traffic control before starting the pipeline
-    from traffic_scheduling_algorithm import start_traffic_control
-    traffic_control_thread = start_traffic_control()  # Store thread reference
-    
     print("Starting pipeline \n")
+    # start play back and listed to events		
     pipeline.set_state(Gst.State.PLAYING)
     try:
         loop.run()
     except:
         pass
-    finally:
-        # Stop traffic control when exiting
-        from traffic_scheduling_algorithm import stop_traffic_control
-        stop_traffic_control()
-        traffic_control_thread.join(timeout=5)  # Add timeout to prevent hanging
-        # cleanup
-        print("Exiting app\n")
-        pipeline.set_state(Gst.State.NULL)
+    # cleanup
+    print("Exiting app\n")
+    pipeline.set_state(Gst.State.NULL)
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv))
