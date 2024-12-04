@@ -536,3 +536,598 @@ def main(args):
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv))
+
+
+
+version -2 
+
+#!/usr/bin/env python3
+
+import sys
+sys.path.append('../')
+import gi
+# import configparser
+gi.require_version('Gst', '1.0')
+from gi.repository import GObject, Gst
+from gi.repository import GLib
+from ctypes import *
+import time
+import sys
+import math
+import platform
+from common.is_aarch_64 import is_aarch64
+from common.bus_call import bus_call
+from common.FPS import GETFPS
+
+import pyds
+import random
+import Jetson.GPIO as GPIO
+import threading
+from time import sleep
+
+fps_streams={}
+
+MAX_DISPLAY_LEN=64
+PGIE_CLASS_ID_VEHICLE = 0
+PGIE_CLASS_ID_BICYCLE = 1
+PGIE_CLASS_ID_PERSON = 2
+PGIE_CLASS_ID_ROADSIGN = 3
+MUXER_OUTPUT_WIDTH=1280
+MUXER_OUTPUT_HEIGHT=720
+MUXER_BATCH_TIMEOUT_USEC=4000000
+TILED_OUTPUT_WIDTH=640 * 2
+TILED_OUTPUT_HEIGHT=480 * 2
+GST_CAPS_FEATURES_NVMM="memory:NVMM"
+OSD_PROCESS_MODE= 0
+OSD_DISPLAY_TEXT= 0
+pgie_classes_str= ["Vehicle", "TwoWheeler", "Person","RoadSign"]
+
+# Add GPIO imports and setup
+import Jetson.GPIO as GPIO
+import threading
+from time import sleep
+
+# GPIO setup
+GPIO.setmode(GPIO.BOARD)
+GPIO_PINS = {
+    "north": 7,  # Adjust pin numbers as per your hardware setup
+    "south": 11,
+    "east": 13,
+    "west": 15
+}
+
+# Setup GPIO pins as output
+for pin in GPIO_PINS.values():
+    GPIO.setup(pin, GPIO.OUT)
+    GPIO.output(pin, GPIO.LOW)  # All signals red initially
+
+# Modify the traffic control related variables
+lanes = {
+    "north": {"total_count": 0, "green_time": 0, "is_green": False, "last_green": 0},
+    "east": {"total_count": 0, "green_time": 0, "is_green": False, "last_green": 0},
+    "south": {"total_count": 0, "green_time": 0, "is_green": False, "last_green": 0},
+    "west": {"total_count": 0, "green_time": 0, "is_green": False, "last_green": 0},
+}
+
+# Traffic control parameters
+minimum_green_time = 10  # Minimum time a lane gets green light
+time_lost_during_switch = 5  # Seconds lost during phase switches
+
+# Add traffic light control thread
+current_green_lane = None
+traffic_control_thread = None
+should_stop = False
+
+# Add these constants for traffic control
+MAX_GREEN_TIME = 60  # Maximum green time for any lane
+MIN_GREEN_TIME = 10  # Minimum green time for any lane
+BASE_TIME_PER_OBJECT = 2  # Base seconds per detected object
+CONGESTION_THRESHOLD = 20  # Number of objects that indicates congestion
+STARVATION_TIME = 45  # Maximum time a lane should wait
+
+def calculate_green_time(lane_data, current_time):
+    """Calculate optimal green time based on various factors"""
+    object_count = lane_data["total_count"]
+    wait_time = current_time - lane_data["last_green"]
+    
+    # Base time calculation based on object count
+    base_time = object_count * BASE_TIME_PER_OBJECT
+    
+    # Adjust for congestion
+    if object_count > CONGESTION_THRESHOLD:
+        congestion_factor = 1.5
+        base_time *= congestion_factor
+    
+    # Adjust for waiting time
+    if wait_time > STARVATION_TIME:
+        starvation_factor = 1.3
+        base_time *= starvation_factor
+    
+    # Ensure time is within bounds
+    green_time = max(MIN_GREEN_TIME, min(base_time, MAX_GREEN_TIME))
+    
+    return int(green_time)
+
+def select_next_lane(current_time):
+    """Select the next lane based on multiple factors"""
+    lane_scores = {}
+    
+    for direction, data in lanes.items():
+        # Calculate wait time factor
+        wait_time = current_time - data["last_green"]
+        wait_factor = min(wait_time / STARVATION_TIME, 2.0)
+        
+        # Calculate congestion factor
+        congestion = data["total_count"] / CONGESTION_THRESHOLD
+        
+        # Combined score considering both waiting time and congestion
+        lane_scores[direction] = (congestion * 0.7 + wait_factor * 0.3) * data["total_count"]
+    
+    # Select lane with highest score
+    return max(lane_scores.items(), key=lambda x: x[1])[0]
+
+def schedule_traffic_lights():
+    global current_green_lane
+    current_time = time.time()
+    
+    # Select next lane
+    next_lane = select_next_lane(current_time)
+    
+    # Calculate green time
+    green_time = calculate_green_time(lanes[next_lane], current_time)
+    
+    # Update lane data
+    lanes[next_lane]["green_time"] = green_time
+    lanes[next_lane]["last_green"] = current_time
+    
+    # Set the next lane as current green lane
+    current_green_lane = next_lane
+    
+    # Print the traffic schedule with detailed information
+    print("\nTraffic Schedule Update at {}:".format(time.strftime("%H:%M:%S")))
+    print("Current object counts and wait times:")
+    for direction, data in lanes.items():
+        wait_time = current_time - data["last_green"]
+        print("{}: {} objects, waiting for {:.1f} seconds".format(
+            direction, 
+            data["total_count"],
+            wait_time
+        ))
+    print("Selected lane: {} for {} seconds".format(next_lane, green_time))
+    print("Selection factors:")
+    print("- Congestion level: {:.2f}".format(lanes[next_lane]["total_count"] / CONGESTION_THRESHOLD))
+    print("- Wait time: {:.1f} seconds".format(current_time - lanes[next_lane]["last_green"]))
+
+def control_traffic_lights():
+    global current_green_lane, should_stop
+    
+    while not should_stop:
+        if current_green_lane:
+            direction = current_green_lane
+            green_time = lanes[direction]["green_time"]
+            
+            # Turn all signals red first
+            for pin in GPIO_PINS.values():
+                GPIO.output(pin, GPIO.LOW)
+            
+            # Turn the selected direction green
+            GPIO.output(GPIO_PINS[direction], GPIO.HIGH)
+            print("\nGreen light ON for {} direction for {} seconds".format(direction, green_time))
+            
+            start_time = time.time()
+            elapsed_time = 0
+            
+            # Monitor traffic while green light is on
+            while elapsed_time < green_time and not should_stop:
+                sleep(1)
+                elapsed_time = time.time() - start_time
+                
+                # Optionally end early if traffic is very low
+                if elapsed_time > MIN_GREEN_TIME and lanes[direction]["total_count"] < 2:
+                    print("Early termination due to low traffic")
+                    break
+            
+            # Turn off green
+            GPIO.output(GPIO_PINS[direction], GPIO.LOW)
+            print("Green light OFF for {} direction after {:.1f} seconds".format(
+                direction, elapsed_time))
+            
+            # Sleep for transition period
+            print("Transition period: {} seconds".format(time_lost_during_switch))
+            sleep(time_lost_during_switch)
+            
+            current_green_lane = None
+        else:
+            sleep(0.1)  # Small sleep to prevent CPU hogging
+
+# tiler_sink_pad_buffer_probe  will extract metadata received on OSD sink pad
+# and update params for drawing rectangle, object information etc.
+def tiler_src_pad_buffer_probe(pad,info,u_data):
+    frame_number=0
+    num_rects=0
+    gst_buffer = info.get_buffer()
+    if not gst_buffer:
+        print("Unable to get GstBuffer ")
+        return
+
+    batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
+    l_frame = batch_meta.frame_meta_list
+
+    # Reset object counts for this frame
+    current_counts = {
+        "north": 0,
+        "east": 0,
+        "south": 0,
+        "west": 0
+    }
+    
+    directions = ["north", "east", "south", "west"]
+    
+    while l_frame is not None:
+        try:
+            frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
+        except StopIteration:
+            break
+
+        direction = directions[frame_meta.source_id]
+        l_obj = frame_meta.obj_meta_list
+        
+        # Count all objects
+        while l_obj is not None:
+            try:
+                obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
+                current_counts[direction] += 1
+            except StopIteration:
+                break
+            try:
+                l_obj = l_obj.next
+            except StopIteration:
+                break
+                
+        try:
+            l_frame = l_frame.next
+        except StopIteration:
+            break
+            
+    # Update the lanes dictionary with new counts
+    for direction in directions:
+        lanes[direction]["total_count"] = current_counts[direction]
+        
+    # Run traffic control algorithm if no direction is currently green
+    if current_green_lane is None:
+        schedule_traffic_lights()
+    
+    return Gst.PadProbeReturn.OK
+
+def cb_newpad(decodebin, decoder_src_pad,data):
+    print("In cb_newpad\n")
+    caps=decoder_src_pad.get_current_caps()
+    gststruct=caps.get_structure(0)
+    gstname=gststruct.get_name()
+    source_bin=data
+    features=caps.get_features(0)
+
+    # Need to check if the pad created by the decodebin is for video and not
+    # audio.
+    print("gstname=",gstname)
+    if(gstname.find("video")!=-1):
+        # Link the decodebin pad only if decodebin has picked nvidia
+        # decoder plugin nvdec_*. We do this by checking if the pad caps contain
+        # NVMM memory features.
+        print("features=",features)
+        if features.contains("memory:NVMM"):
+            # Get the source bin ghost pad
+            bin_ghost_pad=source_bin.get_static_pad("src")
+            if not bin_ghost_pad.set_target(decoder_src_pad):
+                sys.stderr.write("Failed to link decoder src pad to source bin ghost pad\n")
+        else:
+            sys.stderr.write(" Error: Decodebin did not pick nvidia decoder plugin.\n")
+
+def decodebin_child_added(child_proxy,Object,name,user_data):
+    print("Decodebin child added:", name, "\n")
+    if(name.find("decodebin") != -1):
+        Object.connect("child-added",decodebin_child_added,user_data)   
+    if(is_aarch64() and name.find("nvv4l2decoder") != -1):
+        print("Seting bufapi_version\n")
+        Object.set_property("bufapi-version",True)
+
+def create_source_bin(index, uri):
+    print("Creating source bin")
+    
+    bin_name = "source-bin-%02d" % index
+    print(bin_name)
+    nbin = Gst.Bin.new(bin_name)
+    if not nbin:
+        sys.stderr.write(" Unable to create source bin \n")
+        return None
+
+    # Check if input is a USB camera or a file/stream
+    if uri.startswith("/dev/video"):
+        # USB camera source
+        print("Creating USB camera source\n")
+        source = Gst.ElementFactory.make("v4l2src", "usb-cam-source")
+        if not source:
+            sys.stderr.write(" Unable to create v4l2src \n")
+            return None
+            
+        caps_v4l2src = Gst.ElementFactory.make("capsfilter", "v4l2src_caps")
+        if not caps_v4l2src:
+            sys.stderr.write("Could not create caps_v4l2src\n")
+            return None
+        
+        vidconvsrc = Gst.ElementFactory.make("videoconvert", "convertor_src1")
+        if not vidconvsrc:
+            sys.stderr.write(" Unable to create videoconvert \n")
+            return None
+
+        nvvidconvsrc = Gst.ElementFactory.make("nvvideoconvert", "convertor_src2")
+        if not nvvidconvsrc:
+            sys.stderr.write(" Unable to create Nvvideoconvert \n")
+            return None
+
+        caps_vidconvsrc = Gst.ElementFactory.make("capsfilter", "nvmm_caps")
+        if not caps_vidconvsrc:
+            sys.stderr.write(" Unable to create capsfilter \n")
+            return None
+
+        caps_v4l2src.set_property('caps', Gst.Caps.from_string("video/x-raw,framerate=15/1"))
+        caps_vidconvsrc.set_property('caps', Gst.Caps.from_string("video/x-raw(memory:NVMM)"))
+        source.set_property('device', uri)
+
+        # Add and link elements
+        nbin.add(source)
+        nbin.add(caps_v4l2src)
+        nbin.add(vidconvsrc)
+        nbin.add(nvvidconvsrc)
+        nbin.add(caps_vidconvsrc)
+
+        source.link(caps_v4l2src)
+        caps_v4l2src.link(vidconvsrc)
+        vidconvsrc.link(nvvidconvsrc)
+        nvvidconvsrc.link(caps_vidconvsrc)
+
+        srcpad = caps_vidconvsrc.get_static_pad("src")
+        
+    else:
+        # File/Stream source
+        print("Creating file/stream source\n")
+        uri_decode_bin = Gst.ElementFactory.make("uridecodebin", "uri-decode-bin")
+        if not uri_decode_bin:
+            sys.stderr.write(" Unable to create uri decode bin \n")
+            return None
+        
+        # Set the input uri to the source element
+        uri_decode_bin.set_property("uri", uri)
+        
+        # Connect to the "pad-added" signal of the decodebin
+        uri_decode_bin.connect("pad-added", cb_newpad, nbin)
+        uri_decode_bin.connect("child-added", decodebin_child_added, nbin)
+        
+        # Add to bin
+        Gst.Bin.add(nbin, uri_decode_bin)
+        
+        # Create ghost pad
+        bin_pad = nbin.add_pad(Gst.GhostPad.new_no_target("src", Gst.PadDirection.SRC))
+        if not bin_pad:
+            sys.stderr.write(" Failed to add ghost pad in source bin \n")
+            return None
+        return nbin
+
+    # Add ghost pad for USB camera source
+    bin_pad = nbin.add_pad(Gst.GhostPad.new("src", srcpad))
+    if not bin_pad:
+        sys.stderr.write(" Failed to add ghost pad in source bin \n")
+        return None
+    
+    return nbin
+
+#For reference here is the code for setting up the pipelines and the linking for the app:
+
+def main(args):
+    global traffic_control_thread, should_stop
+    
+    # Start traffic control thread
+    traffic_control_thread = threading.Thread(target=control_traffic_lights)
+    traffic_control_thread.start()
+    
+    try:
+        # Check input arguments
+        if len(args) < 2:
+            sys.stderr.write("usage: %s <uri1> [uri2] ... [uriN]\n" % args[0])
+            sys.exit(1)
+
+        # Ensure we have exactly 4 sources for the 4 directions
+        if len(args) != 5:  # 1 for program name + 4 for sources
+            sys.stderr.write("Please provide exactly 4 video sources for traffic monitoring\n")
+            sys.stderr.write("usage: %s <north_src> <east_src> <south_src> <west_src>\n" % args[0])
+            sys.exit(1)
+        
+        #  for mjpg
+        # fps_streams["stream{0}"]=GETFPS(0)
+        # source_bin = create_source_bin(0,args[1], is_mjpg=False)
+        # pipeline.add(source_bin)
+        # srcpad = source_bin.get_static_pad("src")
+        # sinkpad = streammux.get_request_pad("sink_0")
+        # srcpad.link(sinkpad)
+        
+        # for YUYV
+        
+        # for i in range(1,len(args)-1):
+        #     fps_streams["stream{i}"]=GETFPS(i)
+        #     source_bin = create_source_bin(i,args[i+1], is_mjpg=False)
+        #     pipeline.add(source_bin)
+        #     srcpad = source_bin.get_static_pad("src")
+        #     sinkpad = streammux.get_request_pad("sink_{i}")
+        #     srcpad.link(sinkpad)
+            
+        
+        for i in range(0,len(args)-1):
+            fps_streams["stream{0}".format(i)]=GETFPS(i)
+            print(GETFPS(i))
+        number_sources=len(args)-1
+
+        # Standard GStreamer initialization
+        GObject.threads_init()
+        Gst.init(None)
+
+        # Create gstreamer elements */
+        # Create Pipeline element that will form a connection of other elements
+        print("Creating Pipeline \n ")
+        pipeline = Gst.Pipeline()
+        is_live = False
+
+        if not pipeline:
+            sys.stderr.write(" Unable to create Pipeline \n")
+        print("Creating streamux \n ")
+
+        # Create nvstreammux instance to form batches from one or more sources.
+        streammux = Gst.ElementFactory.make("nvstreammux", "Stream-muxer")
+        if not streammux:
+            sys.stderr.write(" Unable to create NvStreamMux \n")
+
+        pipeline.add(streammux)
+        for i in range(number_sources):
+            print("Creating source_bin ",i," \n ")
+            uri = args[i+1]
+            
+            # Set is_live for both RTSP streams and USB cameras
+            if uri.startswith("rtsp://") or uri.startswith("/dev/video"):
+                is_live = True
+            
+            source_bin = create_source_bin(i, uri)
+            if not source_bin:
+                sys.stderr.write("Unable to create source bin \n")
+            pipeline.add(source_bin)
+            padname = "sink_%u" % i
+            sinkpad = streammux.get_request_pad(padname)
+            if not sinkpad:
+                sys.stderr.write("Unable to create sink pad bin \n")
+            srcpad = source_bin.get_static_pad("src")
+            if not srcpad:
+                sys.stderr.write("Unable to create src pad bin \n")
+            srcpad.link(sinkpad)
+        queue1=Gst.ElementFactory.make("queue","queue1")
+        queue2=Gst.ElementFactory.make("queue","queue2")
+        queue3=Gst.ElementFactory.make("queue","queue3")
+        queue4=Gst.ElementFactory.make("queue","queue4")
+        queue5=Gst.ElementFactory.make("queue","queue5")
+        pipeline.add(queue1)
+        pipeline.add(queue2)
+        pipeline.add(queue3)
+        pipeline.add(queue4)
+        pipeline.add(queue5)
+        print("Creating Pgie \n ")
+        pgie = Gst.ElementFactory.make("nvinfer", "p376rimary-inference")
+        if not pgie:
+            sys.stderr.write(" Unable to create pgie \n")
+        print("Creating tiler \n ")
+        tiler=Gst.ElementFactory.make("nvmultistreamtiler", "nvtiler")
+        if not tiler:
+            sys.stderr.write(" Unable to create tiler \n")
+        print("Creating nvvidconv \n ")
+        nvvidconv = Gst.ElementFactory.make("nvvideoconvert", "convertor")
+        if not nvvidconv:
+            sys.stderr.write(" Unable to create nvvidconv \n")
+        print("Creating nvosd \n ")
+        nvosd = Gst.ElementFactory.make("nvdsosd", "onscreendisplay")
+        if not nvosd:
+            sys.stderr.write(" Unable to create nvosd \n")
+        nvosd.set_property('process-mode',OSD_PROCESS_MODE)
+        nvosd.set_property('display-text',OSD_DISPLAY_TEXT)
+        if(is_aarch64()):
+            print("Creating transform \n ")
+            transform=Gst.ElementFactory.make("nvegltransform", "nvegl-transform")
+            if not transform:
+                sys.stderr.write(" Unable to create transform \n")
+
+        print("Creating EGLSink \n")
+        sink = Gst.ElementFactory.make("nveglglessink", "nvvideo-renderer")
+        #sink = Gst.ElementFactory.make("nvoverlaysink", "nvvideo-renderer")
+        sink.set_property('sync', 0)
+        if not sink:
+            sys.stderr.write(" Unable to create egl sink \n")
+
+        if is_live:
+            print("Atleast one of the sources is live")
+            streammux.set_property('live-source', 1)
+
+        streammux.set_property('width', 1280)
+        streammux.set_property('height', 720)
+        streammux.set_property('batch-size', number_sources)
+        streammux.set_property('batched-push-timeout', 4000000)
+        pgie.set_property('config-file-path', "dstest1_pgie_config.txt")
+        pgie_batch_size=pgie.get_property("batch-size")
+        if(pgie_batch_size != number_sources):
+            print("WARNING: Overriding infer-config batch-size",pgie_batch_size," with number of sources ", number_sources," \n")
+            pgie.set_property("batch-size",number_sources)
+        #tiler_rows=int(math.sqrt(number_sources))
+        tiler_rows=2
+        #tiler_columns=int(math.ceil((1.0*number_sources)/tiler_rows))
+        tiler_columns=2
+        tiler.set_property("rows",tiler_rows)
+        tiler.set_property("columns",tiler_columns)
+        tiler.set_property("width", TILED_OUTPUT_WIDTH)
+        tiler.set_property("height", TILED_OUTPUT_HEIGHT)
+        sink.set_property("qos",0)
+
+        print("Adding elements to Pipeline \n")
+        pipeline.add(pgie)
+        pipeline.add(tiler)
+        pipeline.add(nvvidconv)
+        pipeline.add(nvosd)
+        if is_aarch64():
+            pipeline.add(transform)
+        pipeline.add(sink)
+
+        print("Linking elements in the Pipeline \n")
+        streammux.link(queue1)
+        queue1.link(pgie)
+        pgie.link(queue2)
+        queue2.link(tiler)
+        tiler.link(queue3)
+        queue3.link(nvvidconv)
+        nvvidconv.link(queue4)
+        queue4.link(nvosd)
+        if is_aarch64():
+            nvosd.link(queue5)
+            queue5.link(transform)
+            transform.link(sink)
+        else:
+            nvosd.link(queue5)
+            queue5.link(sink)   
+        # create an event loop and feed gstreamer bus mesages to it
+        loop = GObject.MainLoop()
+        bus = pipeline.get_bus()
+        bus.add_signal_watch()
+        bus.connect ("message", bus_call, loop)
+        tiler_src_pad=pgie.get_static_pad("src")
+        if not tiler_src_pad:
+            sys.stderr.write(" Unable to get src pad \n")
+        else:
+            tiler_src_pad.add_probe(Gst.PadProbeType.BUFFER, tiler_src_pad_buffer_probe, 0)
+
+        # List the sources
+        print("Now playing...")
+        for i, source in enumerate(args):
+            if (i != 0):
+                print(i, ": ", source)
+
+        print("Starting pipeline \n")
+        # start play back and listed to events		
+        pipeline.set_state(Gst.State.PLAYING)
+        loop.run()
+    except:
+        pass
+    
+    # Cleanup
+    should_stop = True
+    if traffic_control_thread:
+        traffic_control_thread.join()
+    
+    # Cleanup GPIO
+    GPIO.cleanup()
+    print("Exiting app\n")
+    pipeline.set_state(Gst.State.NULL)
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))
