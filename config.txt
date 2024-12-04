@@ -1,3 +1,6 @@
+##combined usb plus files 
+
+
 #!/usr/bin/env python3
 
 import sys
@@ -153,106 +156,94 @@ def decodebin_child_added(child_proxy,Object,name,user_data):
         print("Seting bufapi_version\n")
         Object.set_property("bufapi-version",True)
 
-def create_source_bin(index,uri):
+def create_source_bin(index, uri):
     print("Creating source bin")
     
-    bin_name="source-bin-%02d" %index
+    bin_name = "source-bin-%02d" % index
     print(bin_name)
-    nbin=Gst.Bin.new(bin_name)
+    nbin = Gst.Bin.new(bin_name)
     if not nbin:
         sys.stderr.write(" Unable to create source bin \n")
+        return None
 
-    print("Creating Source \n ")
-    source = Gst.ElementFactory.make("v4l2src", "usb-cam-source")
-    if not source:
-        sys.stderr.write(" Unable to create source \n")
+    # Check if input is a USB camera or a file/stream
+    if uri.startswith("/dev/video"):
+        # USB camera source
+        print("Creating USB camera source\n")
+        source = Gst.ElementFactory.make("v4l2src", "usb-cam-source")
+        if not source:
+            sys.stderr.write(" Unable to create v4l2src \n")
+            return None
+            
+        caps_v4l2src = Gst.ElementFactory.make("capsfilter", "v4l2src_caps")
+        if not caps_v4l2src:
+            sys.stderr.write("Could not create caps_v4l2src\n")
+            return None
         
-    # Modify v4l2src properties for better memory handling
-    source.set_property('device', uri)
-    source.set_property('io-mode', 4)  # Use dmabuf-import mode
-    source.set_property('do-timestamp', True)
-    source.set_property('drop-on-latency', True)  # Drop frames if we can't keep up
-    
-    # Add a videorate element to limit framerate
-    videorate = Gst.ElementFactory.make("videorate", f"videorate-{index}")
-    if not videorate:
-        sys.stderr.write(" Unable to create videorate \n")
-    
-    # Add videorate caps to force lower framerate
-    videorate_caps = Gst.ElementFactory.make("capsfilter", f"videorate_caps_{index}")
-    if not videorate_caps:
-        sys.stderr.write(" Unable to create videorate caps \n")
-    
-    videorate_caps.set_property('caps',
-        Gst.Caps.from_string("video/x-raw,framerate=10/1"))
-    
-    # Modify resolution in source caps
-    caps_v4l2src = Gst.ElementFactory.make("capsfilter", "v4l2src_caps")
-    if not caps_v4l2src:
-        sys.stderr.write("Could not create caps_v4l2src")
-    
-    caps_v4l2src.set_property('caps',
-        Gst.Caps.from_string("video/x-raw,width=320,height=240"))
-    
-    # videoconvert to make sure a superset of raw formats are supported
-    vidconvsrc = Gst.ElementFactory.make("videoconvert", "convertor_src1")
-    if not vidconvsrc:
-        sys.stderr.write(" Unable to create videoconvert \n")
+        vidconvsrc = Gst.ElementFactory.make("videoconvert", "convertor_src1")
+        if not vidconvsrc:
+            sys.stderr.write(" Unable to create videoconvert \n")
+            return None
 
-    # nvvideoconvert to convert incoming raw buffers to NVMM Mem (NvBufSurface API)
-    nvvidconvsrc = Gst.ElementFactory.make("nvvideoconvert", "convertor_src2")
-    if not nvvidconvsrc:
-        sys.stderr.write(" Unable to create Nvvideoconvert \n")
+        nvvidconvsrc = Gst.ElementFactory.make("nvvideoconvert", "convertor_src2")
+        if not nvvidconvsrc:
+            sys.stderr.write(" Unable to create Nvvideoconvert \n")
+            return None
 
-    caps_vidconvsrc = Gst.ElementFactory.make("capsfilter", "nvmm_caps")
-    if not caps_vidconvsrc:
-        sys.stderr.write(" Unable to create capsfilter \n")
+        caps_vidconvsrc = Gst.ElementFactory.make("capsfilter", "nvmm_caps")
+        if not caps_vidconvsrc:
+            sys.stderr.write(" Unable to create capsfilter \n")
+            return None
 
-    # if is_mjpg:
-    #     caps_v4l2src.set_property('caps', Gst.Caps.from_string("video/x-raw, framerate=15/1"))
-    
-    caps_v4l2src.set_property('caps', Gst.Caps.from_string("video/x-raw,framerate=15/1"))
-    
-    caps_vidconvsrc.set_property('caps', Gst.Caps.from_string("video/x-raw(memory:NVMM) "))
+        caps_v4l2src.set_property('caps', Gst.Caps.from_string("video/x-raw,framerate=15/1"))
+        caps_vidconvsrc.set_property('caps', Gst.Caps.from_string("video/x-raw(memory:NVMM)"))
+        source.set_property('device', uri)
 
-    # Add elements to bin
-    nbin.add(source)
-    nbin.add(videorate)
-    nbin.add(videorate_caps)
-    nbin.add(caps_v4l2src)
-    nbin.add(vidconvsrc)
-    nbin.add(nvvidconvsrc)
-    nbin.add(caps_vidconvsrc)
-    
-    # Link elements
-    source.link(caps_v4l2src)
-    caps_v4l2src.link(videorate)
-    videorate.link(videorate_caps)
-    videorate_caps.link(vidconvsrc)
-    vidconvsrc.link(nvvidconvsrc)
-    nvvidconvsrc.link(caps_vidconvsrc)
+        # Add and link elements
+        nbin.add(source)
+        nbin.add(caps_v4l2src)
+        nbin.add(vidconvsrc)
+        nbin.add(nvvidconvsrc)
+        nbin.add(caps_vidconvsrc)
 
-    # Connect to the "pad-added" signal of the decodebin which generates a
-    # callback once a new pad for raw data has beed created by the decodebin
-   
-    # uri_decode_bin.connect("pad-added",cb_newpad,nbin)
-    # uri_decode_bin.connect("child-added",decodebin_child_added,nbin)
+        source.link(caps_v4l2src)
+        caps_v4l2src.link(vidconvsrc)
+        vidconvsrc.link(nvvidconvsrc)
+        nvvidconvsrc.link(caps_vidconvsrc)
 
-    # We need to create a ghost pad for the source bin which will act as a proxy
-    # for the video decoder src pad. The ghost pad will not have a target right
-    # now. Once the decode bin creates the video decoder and generates the
-    # cb_newpad callback, we will set the ghost pad target to the video decoder
-    # src pad.
+        srcpad = caps_vidconvsrc.get_static_pad("src")
+        
+    else:
+        # File/Stream source
+        print("Creating file/stream source\n")
+        uri_decode_bin = Gst.ElementFactory.make("uridecodebin", "uri-decode-bin")
+        if not uri_decode_bin:
+            sys.stderr.write(" Unable to create uri decode bin \n")
+            return None
+        
+        # Set the input uri to the source element
+        uri_decode_bin.set_property("uri", uri)
+        
+        # Connect to the "pad-added" signal of the decodebin
+        uri_decode_bin.connect("pad-added", cb_newpad, nbin)
+        uri_decode_bin.connect("child-added", decodebin_child_added, nbin)
+        
+        # Add to bin
+        Gst.Bin.add(nbin, uri_decode_bin)
+        
+        # Create ghost pad
+        bin_pad = nbin.add_pad(Gst.GhostPad.new_no_target("src", Gst.PadDirection.SRC))
+        if not bin_pad:
+            sys.stderr.write(" Failed to add ghost pad in source bin \n")
+            return None
+        return nbin
 
-    # Gst.Bin.add(nbin,uri_decode_bin)
-
-    srcpad = caps_vidconvsrc.get_static_pad("src")
-
-    bin_pad=nbin.add_pad(Gst.GhostPad.new("src",srcpad))
-    
+    # Add ghost pad for USB camera source
+    bin_pad = nbin.add_pad(Gst.GhostPad.new("src", srcpad))
     if not bin_pad:
         sys.stderr.write(" Failed to add ghost pad in source bin \n")
         return None
+    
     return nbin
 
 #For reference here is the code for setting up the pipelines and the linking for the app:
@@ -309,18 +300,21 @@ def main(args):
     pipeline.add(streammux)
     for i in range(number_sources):
         print("Creating source_bin ",i," \n ")
-        usb_cam=args[i+1]
-        # if uri_name.find("rtsp://") == 0 :
-        is_live = True
-        source_bin=create_source_bin(i, usb_cam)
+        uri = args[i+1]
+        
+        # Set is_live for both RTSP streams and USB cameras
+        if uri.startswith("rtsp://") or uri.startswith("/dev/video"):
+            is_live = True
+            
+        source_bin = create_source_bin(i, uri)
         if not source_bin:
             sys.stderr.write("Unable to create source bin \n")
         pipeline.add(source_bin)
-        padname="sink_%u" %i
-        sinkpad= streammux.get_request_pad(padname) 
+        padname = "sink_%u" % i
+        sinkpad = streammux.get_request_pad(padname)
         if not sinkpad:
             sys.stderr.write("Unable to create sink pad bin \n")
-        srcpad=source_bin.get_static_pad("src")
+        srcpad = source_bin.get_static_pad("src")
         if not srcpad:
             sys.stderr.write("Unable to create src pad bin \n")
         srcpad.link(sinkpad)
@@ -369,13 +363,10 @@ def main(args):
         print("Atleast one of the sources is live")
         streammux.set_property('live-source', 1)
 
-    streammux.set_property('width', 320)
-    streammux.set_property('height', 240)
+    streammux.set_property('width', 1280)
+    streammux.set_property('height', 720)
     streammux.set_property('batch-size', number_sources)
-    streammux.set_property('batched-push-timeout', 4000)
-    streammux.set_property('buffer-pool-size', 4)
-    streammux.set_property('nvbuf-memory-type', 4)  # Use system memory
-    streammux.set_property('live-source', 1)
+    streammux.set_property('batched-push-timeout', 4000000)
     pgie.set_property('config-file-path', "dstest1_pgie_config.txt")
     pgie_batch_size=pgie.get_property("batch-size")
     if(pgie_batch_size != number_sources):
@@ -387,32 +378,9 @@ def main(args):
     tiler_columns=2
     tiler.set_property("rows",tiler_rows)
     tiler.set_property("columns",tiler_columns)
-    tiler.set_property("width", 640)  # Further reduced
-    tiler.set_property("height", 480)  # Further reduced
+    tiler.set_property("width", TILED_OUTPUT_WIDTH)
+    tiler.set_property("height", TILED_OUTPUT_HEIGHT)
     sink.set_property("qos",0)
-
-    # Add queue properties to manage memory
-    for queue in [queue1, queue2, queue3, queue4, queue5]:
-        queue.set_property('max-size-buffers', 1)
-        queue.set_property('max-size-bytes', 0)
-        queue.set_property('max-size-time', 0)
-        queue.set_property('leaky', 2)  # Leak downstream
-        queue.set_property('silent', False)  # Enable warning messages
-    
-    # Modify pgie properties
-    pgie.set_property('batch-size', number_sources)
-    pgie.set_property('interval', 5)  # Process every 5th frame
-    pgie.set_property('gpu-id', 0)
-    pgie.set_property('nvbuf-memory-type', 4)  # Use system memory
-    
-    # Add nvvidconv properties
-    nvvidconv.set_property('nvbuf-memory-type', 3)  # Use surface memory
-    
-    # Modify sink properties
-    sink.set_property('sync', False)
-    sink.set_property('async', False)
-    sink.set_property('max-lateness', -1)
-    sink.set_property('qos', True)
 
     print("Adding elements to Pipeline \n")
     pipeline.add(pgie)
@@ -466,14 +434,6 @@ def main(args):
     # cleanup
     print("Exiting app\n")
     pipeline.set_state(Gst.State.NULL)
-
-    # Add error handler to pipeline bus
-    def on_error(bus, msg):
-        err, debug = msg.parse_error()
-        print(f"Error: {err}, Debug: {debug}")
-        loop.quit()
-        
-    bus.connect('message::error', on_error)
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv))
