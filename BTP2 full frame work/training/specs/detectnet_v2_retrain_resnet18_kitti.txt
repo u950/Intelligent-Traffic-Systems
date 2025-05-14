@@ -1,0 +1,448 @@
+random_seed: 42
+dataset_config {
+  data_sources {
+    tfrecords_path: "/workspace/tao-experiments/data/images/imagestfrecords/kitti_trainval/*"
+    image_directory_path: "/workspace/tao-experiments/data/images/images"
+  }
+
+  image_extension: "jpg"
+
+
+  target_class_mapping {
+    key: "motorcycle"
+    value: "motorcycle"
+  }
+  target_class_mapping {
+    key: "truck"
+    value: "truck"
+  }
+  target_class_mapping {
+    key: "car"
+    value: "car"
+  }
+  target_class_mapping {
+    key: "bus"
+    value: "bus"
+  }
+  target_class_mapping {
+    key: "autorickshaw"
+    value: "autorickshaw"
+  }
+
+  validation_fold: 0  
+}
+augmentation_config {
+  preprocessing {
+    output_image_width: 960
+    output_image_height: 544
+    min_bbox_width: 1.0
+    min_bbox_height: 1.0
+    output_image_channel: 3
+  }
+  spatial_augmentation {
+    hflip_probability: 0.5
+    zoom_min: 1.0
+    zoom_max: 1.0
+    translate_max_x: 8.0
+    translate_max_y: 8.0
+  }
+  color_augmentation {
+    hue_rotation_max: 25.0
+    saturation_shift_max: 0.20000000298
+    contrast_scale_max: 0.10000000149
+    contrast_center: 0.5
+  }
+}
+postprocessing_config {
+
+  target_class_config {
+    key: "motorcycle"
+    value {
+      clustering_config {
+        clustering_algorithm: DBSCAN
+        dbscan_confidence_threshold: 0.1
+        coverage_threshold: 0.0005
+        dbscan_eps: 0.4
+        dbscan_min_samples: 1
+        minimum_bounding_box_height: 1
+      }
+    }
+  }
+
+
+  target_class_config {
+    key: "truck"
+    value {
+      clustering_config {
+        clustering_algorithm: DBSCAN
+        dbscan_confidence_threshold: 0.2
+        coverage_threshold: 0.0005
+        dbscan_eps: 0.4
+        dbscan_min_samples: 1
+        minimum_bounding_box_height: 1
+      }
+    }
+  }
+  target_class_config {
+    key: "car"
+    value {
+      clustering_config {
+        clustering_algorithm: DBSCAN
+        dbscan_confidence_threshold: 0.2
+        coverage_threshold: 0.0005
+        dbscan_eps: 0.4
+        dbscan_min_samples: 1
+        minimum_bounding_box_height: 1
+      }
+    }
+  }
+  target_class_config {
+    key: "bus"
+    value {
+      clustering_config {
+        clustering_algorithm: DBSCAN
+        dbscan_confidence_threshold: 0.2
+        coverage_threshold: 0.0005
+        dbscan_eps: 0.4
+        dbscan_min_samples: 1
+        minimum_bounding_box_height: 1
+      }
+    }
+  }
+  target_class_config {
+    key: "autorickshaw"
+    value {
+      clustering_config {
+        clustering_algorithm: DBSCAN
+        dbscan_confidence_threshold: 0.1
+        coverage_threshold: 0.0005
+        dbscan_eps: 0.4
+        dbscan_min_samples: 1
+        minimum_bounding_box_height: 1
+      }
+    }
+  }
+
+
+}
+model_config {
+  pretrained_model_file: "/workspace/tao-experiments/detectnet_v2/experiment_dir_pruned/resnet18_nopool_bn_detectnet_v2_pruned.hdf5"
+  use_batch_norm: true
+  objective_set {
+    bbox {
+      scale: 35.0
+      offset: 0.5
+    }
+    cov {
+    }
+  }
+  arch: "resnet"
+}
+evaluation_config {
+  validation_period_during_training: 5
+  first_validation_epoch: 5
+
+  minimum_detection_ground_truth_overlap {
+    key: "motorcycle"
+    value: 0.3
+  }
+
+  minimum_detection_ground_truth_overlap {
+    key: "truck"
+    value: 0.3
+  }
+  minimum_detection_ground_truth_overlap {
+    key: "car"
+    value: 0.4
+  }
+  minimum_detection_ground_truth_overlap {
+    key: "bus"
+    value: 0.3
+  }
+  minimum_detection_ground_truth_overlap {
+    key: "autorickshaw"
+    value: 0.2
+  }
+
+
+  evaluation_box_config {
+    key: "motorcycle"
+    value {
+      minimum_height: 1
+      maximum_height: 9999
+      minimum_width: 1
+      maximum_width: 9999
+    }
+  }
+
+
+  evaluation_box_config {
+    key: "truck"
+    value {
+      minimum_height: 1
+      maximum_height: 9999
+      minimum_width: 1
+      maximum_width: 9999
+    }
+  }
+  evaluation_box_config {
+    key: "car"
+    value {
+      minimum_height: 1
+      maximum_height: 9999
+      minimum_width: 1
+      maximum_width: 9999
+    }
+  }
+  evaluation_box_config {
+    key: "bus"
+    value {
+      minimum_height: 1
+      maximum_height: 9999
+      minimum_width: 1
+      maximum_width: 9999
+    }
+  }
+  evaluation_box_config {
+    key: "autorickshaw"
+    value {
+      minimum_height: 1
+      maximum_height: 9999
+      minimum_width: 1
+      maximum_width: 9999
+    }
+  }
+
+
+  average_precision_mode: INTEGRATE
+}
+
+cost_function_config {
+
+  target_classes {
+    name: "motorcycle"
+    class_weight: 1.6
+    coverage_foreground_weight: 0.05
+    objectives {
+      name: "cov"
+      initial_weight: 1.0
+      weight_target: 1.0
+    }
+    objectives {
+      name: "bbox"
+      initial_weight: 10.0
+      weight_target: 10.0
+    }
+  }
+
+
+  target_classes {
+    name: "truck"
+    class_weight: 8.4
+    coverage_foreground_weight: 0.05
+    objectives {
+      name: "cov"
+      initial_weight: 1.0
+      weight_target: 1.0
+    }
+    objectives {
+      name: "bbox"
+      initial_weight: 10.0
+      weight_target: 10.0
+    }
+  }
+  target_classes {
+    name: "car"
+    class_weight: 2.1
+    coverage_foreground_weight: 0.05
+    objectives {
+      name: "cov"
+      initial_weight: 1.0
+      weight_target: 1.0
+    }
+    objectives {
+      name: "bbox"
+      initial_weight: 10.0
+      weight_target: 10.0
+    }
+  }
+  target_classes {
+    name: "bus"
+    class_weight: 10.0
+    coverage_foreground_weight: 0.05
+    objectives {
+      name: "cov"
+      initial_weight: 1.0
+      weight_target: 1.0
+    }
+    objectives {
+      name: "bbox"
+      initial_weight: 10.0
+      weight_target: 10.0
+    }
+  }
+  target_classes {
+    name: "autorickshaw"
+    class_weight: 7.2
+    coverage_foreground_weight: 0.05
+    objectives {
+      name: "cov"
+      initial_weight: 1.0
+      weight_target: 1.0
+    }
+    objectives {
+      name: "bbox"
+      initial_weight: 10.0
+      weight_target: 10.0
+    }
+  }
+
+
+  enable_autoweighting: false
+  max_objective_weight: 0.999899983406
+  min_objective_weight: 9.99999974738e-05
+}
+
+training_config {
+  batch_size_per_gpu: 8
+  num_epochs: 100
+  learning_rate {
+    soft_start_annealing_schedule {
+      min_learning_rate: 5e-07
+      max_learning_rate: 5e-05
+      soft_start: 0.1
+      annealing: 0.7
+    }
+  }
+  regularizer {
+    type: L1
+    weight: 3.00000002618e-09
+  }
+  optimizer {
+    adam {
+      epsilon: 9.99999993923e-09
+      beta1: 0.899999976158
+      beta2: 0.999000012875
+    }
+  }
+  cost_scaling {
+    initial_exponent: 20.0
+    increment: 0.005
+    decrement: 1.0
+  }
+  visualizer{
+    enabled: true
+    num_images: 3
+    scalar_logging_frequency: 50
+    infrequent_logging_frequency: 5
+
+    target_class_config {
+      key: "motorcycle"
+      value: {
+        coverage_threshold: 0.005
+      }
+    }
+
+
+    target_class_config {
+      key: "truck"
+      value: {
+        coverage_threshold: 0.005
+      }
+    }
+    target_class_config {
+      key: "car"
+      value: {
+        coverage_threshold: 0.005
+      }
+    }
+    target_class_config {
+      key: "bus"
+      value: {
+        coverage_threshold: 0.005
+      }
+    }
+    target_class_config {
+      key: "autorickshaw"
+      value: {
+        coverage_threshold: 0.005
+      }
+    }
+
+
+    clearml_config{
+      project: "TAO Toolkit ClearML Demo"
+      task: "detectnet_v2_resnet18_clearml"
+      tags: "detectnet_v2"
+      tags: "training"
+      tags: "resnet18"
+      tags: "pruned"
+    }
+    wandb_config{
+      project: "TAO Toolkit Wandb Demo"
+      name: "detectnet_v2_resnet18_wandb"
+      tags: "detectnet_v2"
+      tags: "training"
+      tags: "resnet18"
+      tags: "pruned"
+    }
+  }
+  checkpoint_interval: 10
+}
+bbox_rasterizer_config {
+
+  target_class_config {
+    key: "motorcycle"
+    value {
+      cov_center_x: 0.5
+      cov_center_y: 0.5
+      cov_radius_x: 0.4
+      cov_radius_y: 0.4
+      bbox_min_radius: 1.0
+    }
+  }
+
+
+  target_class_config {
+    key: "truck"
+    value {
+      cov_center_x: 0.5
+      cov_center_y: 0.5
+      cov_radius_x: 0.4
+      cov_radius_y: 0.4
+      bbox_min_radius: 1.0
+    }
+  }
+  target_class_config {
+    key: "car"
+    value {
+      cov_center_x: 0.5
+      cov_center_y: 0.5
+      cov_radius_x: 0.4
+      cov_radius_y: 0.4
+      bbox_min_radius: 1.0
+    }
+  }
+  target_class_config {
+    key: "bus"
+    value {
+      cov_center_x: 0.5
+      cov_center_y: 0.5
+      cov_radius_x: 0.4
+      cov_radius_y: 0.4
+      bbox_min_radius: 1.0
+    }
+  }
+  target_class_config {
+    key: "autorickshaw"
+    value {
+      cov_center_x: 0.5
+      cov_center_y: 0.5
+      cov_radius_x: 0.4
+      cov_radius_y: 0.4
+      bbox_min_radius: 1.0
+    }
+  }
+
+  deadzone_radius: 0.400000154972
+}

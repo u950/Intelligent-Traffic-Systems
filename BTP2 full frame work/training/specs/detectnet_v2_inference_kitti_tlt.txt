@@ -1,0 +1,149 @@
+inferencer_config{
+
+  target_classes: "motorcycle"
+  target_classes: "truck"
+  target_classes: "car"
+  target_classes: "bus"
+  target_classes: "autorickshaw"
+
+  # Inference dimensions.
+  image_width: 960
+  image_height: 544
+  # Must match what the model was trained for.
+  image_channels: 3
+  batch_size: 8
+  gpu_index: 0
+  # model handler config
+  tlt_config{
+    model: "/workspace/tao-experiments/detectnet_v2/experiment_dir_retrain/weights/resnet18_detector_pruned.hdf5"
+  }
+}
+bbox_handler_config{
+  kitti_dump: true
+  disable_overlay: false
+  overlay_linewidth: 2
+
+  classwise_bbox_handler_config{
+    key:"motorcycle"
+    value: {
+      confidence_model: "aggregate_cov"
+      output_map: "motorcycle"
+      bbox_color{
+        R: 0
+        G: 255
+        B: 255
+      }
+      clustering_config{
+        clustering_algorithm: DBSCAN
+        coverage_threshold: 0.0001
+        dbscan_eps: 0.7
+        dbscan_min_samples: 1
+        dbscan_confidence_threshold: 0.1
+        minimum_bounding_box_height: 1
+      }
+    }
+  }
+
+
+  classwise_bbox_handler_config{
+    key:"truck"
+    value: {
+      confidence_model: "aggregate_cov"
+      output_map: "truck"
+      bbox_color{
+        R: 255
+        G: 255
+        B: 0
+      }
+      clustering_config{
+        clustering_algorithm: DBSCAN
+        coverage_threshold: 0.0005
+        dbscan_eps: 0.15
+        dbscan_min_samples: 1
+        dbscan_confidence_threshold: 0.9
+        minimum_bounding_box_height: 50
+      }
+    }
+  }
+  classwise_bbox_handler_config{
+    key:"car"
+    value: {
+      confidence_model: "aggregate_cov"
+      output_map: "car"
+      bbox_color{
+        R: 255
+        G: 0
+        B: 255
+      }
+      clustering_config{
+        clustering_algorithm: DBSCAN
+        coverage_threshold: 0.0005
+        dbscan_eps: 0.5
+        dbscan_min_samples: 1
+        dbscan_confidence_threshold: 0.2
+        minimum_bounding_box_height: 1
+      }
+    }
+  }
+  classwise_bbox_handler_config{
+    key:"bus"
+    value: {
+      confidence_model: "aggregate_cov"
+      output_map: "bus"
+      bbox_color{
+        R: 0
+        G: 128
+        B: 255
+      }
+      clustering_config{
+        clustering_algorithm: DBSCAN
+        coverage_threshold: 0.0005
+        dbscan_eps: 0.3
+        dbscan_min_samples: 1
+        dbscan_confidence_threshold: 0.6
+        minimum_bounding_box_height: 20
+      }
+    }
+  }
+  classwise_bbox_handler_config{
+    key:"autorickshaw"
+    value: {
+      confidence_model: "aggregate_cov"
+      output_map: "autorickshaw"
+      bbox_color{
+        R: 128
+        G: 0
+        B: 255
+      }
+      clustering_config{
+        clustering_algorithm: DBSCAN
+        coverage_threshold: 0.0005
+        dbscan_eps: 0.6
+        dbscan_min_samples: 1
+        dbscan_confidence_threshold: 0.2
+        minimum_bounding_box_height: 1
+      }
+    }
+  }
+
+
+  classwise_bbox_handler_config{
+    key:"default"
+    value: {
+      confidence_model: "aggregate_cov"
+      bbox_color{
+        R: 255
+        G: 0
+        B: 0
+      }
+      clustering_config{
+        clustering_algorithm: DBSCAN
+        dbscan_confidence_threshold: 0.3
+        coverage_threshold: 0.0005
+        dbscan_eps: 0.3
+        dbscan_min_samples: 1
+        minimum_bounding_box_height: 10
+      }
+    }
+  }
+}
